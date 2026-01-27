@@ -138,55 +138,79 @@ namespace Store_Acquisition_Assistant
                         JsonObject jsonObject = JsonObject.Parse(content);
                         OutputTextBlock.Text += $"[✓] Successfully parsed JSON response\n";
 
-                        // Navigate through the JSON structure to find the identity information
-
-                        // FIX 1: Changed type from JsonValue to IJsonValue
                         IJsonValue productValue;
-
                         if (jsonObject.TryGetValue("Product", out productValue) && productValue.ValueType == JsonValueType.Object)
                         {
                             JsonObject productObject = productValue.GetObject();
                             OutputTextBlock.Text += "[INFO] Found 'Product' object\n";
 
-                            // Try common property names for identity
-                            string[] identityProperties = { "PackageIdentityName", "IdentityName", "Identity", "Name" };
-
-                            foreach (var propName in identityProperties)
+                            // Check LocalizedProperties array for PackageIdentityName
+                            IJsonValue localizedPropsValue;
+                            if (productObject.TryGetValue("LocalizedProperties", out localizedPropsValue) && localizedPropsValue.ValueType == JsonValueType.Array)
                             {
-                                try
-                                {
-                                    // FIX 2: Changed type from JsonValue to IJsonValue
-                                    IJsonValue identityValue;
+                                JsonArray localizedPropsArray = localizedPropsValue.GetArray();
+                                OutputTextBlock.Text += $"[INFO] Found LocalizedProperties array with {localizedPropsArray.Count} items\n";
 
-                                    if (productObject.TryGetValue(propName, out identityValue) && identityValue.ValueType == JsonValueType.String)
+                                if (localizedPropsArray.Count > 0)
+                                {
+                                    IJsonValue firstPropValue = localizedPropsArray.GetObjectAt(0);
+                                    if (firstPropValue.ValueType == JsonValueType.Object)
                                     {
-                                        string identityName = identityValue.GetString();
-                                        if (!string.IsNullOrEmpty(identityName))
+                                        JsonObject firstProp = firstPropValue.GetObject();
+
+                                        // Look for PackageIdentityName in first localized property
+                                        IJsonValue identityValue;
+                                        if (firstProp.TryGetValue("PackageIdentityName", out identityValue) && identityValue.ValueType == JsonValueType.String)
                                         {
-                                            OutputTextBlock.Text += $"[✓] Found Identity Name in '{propName}': {identityName}\n";
-                                            return identityName;
+                                            string identityName = identityValue.GetString();
+                                            if (!string.IsNullOrEmpty(identityName))
+                                            {
+                                                OutputTextBlock.Text += $"[✓] Found PackageIdentityName: {identityName}\n";
+                                                return identityName;
+                                            }
+                                        }
+
+                                        // List properties in first LocalizedProperty for debugging
+                                        OutputTextBlock.Text += "[INFO] Properties in LocalizedProperties[0]:\n";
+                                        foreach (var prop in firstProp)
+                                        {
+                                            OutputTextBlock.Text += $"  - {prop.Key}\n";
                                         }
                                     }
                                 }
-                                catch { }
                             }
 
-                            // If not found in common properties, list available properties for debugging
-                            OutputTextBlock.Text += "[!] Identity not found in common properties.\n";
-                            OutputTextBlock.Text += "[INFO] Available properties in Product object:\n";
-                            foreach (var prop in productObject)
+                            // Check Properties object
+                            IJsonValue propertiesValue;
+                            if (productObject.TryGetValue("Properties", out propertiesValue) && propertiesValue.ValueType == JsonValueType.Object)
                             {
-                                OutputTextBlock.Text += $"  - {prop.Key}\n";
+                                JsonObject propertiesObject = propertiesValue.GetObject();
+                                OutputTextBlock.Text += "[INFO] Found 'Properties' object\n";
+
+                                IJsonValue identityValue;
+                                if (propertiesObject.TryGetValue("PackageIdentityName", out identityValue) && identityValue.ValueType == JsonValueType.String)
+                                {
+                                    string identityName = identityValue.GetString();
+                                    if (!string.IsNullOrEmpty(identityName))
+                                    {
+                                        OutputTextBlock.Text += $"[✓] Found PackageIdentityName in Properties: {identityName}\n";
+                                        return identityName;
+                                    }
+                                }
+
+                                // List available properties
+                                OutputTextBlock.Text += "[INFO] Available properties:\n";
+                                foreach (var prop in propertiesObject)
+                                {
+                                    OutputTextBlock.Text += $"  - {prop.Key}\n";
+                                }
                             }
+
+                            OutputTextBlock.Text += "[!] Could not find PackageIdentityName in standard locations.\n";
                         }
                         else
                         {
                             OutputTextBlock.Text += "[!] 'Product' property not found in JSON\n";
-                            OutputTextBlock.Text += "[INFO] Available root properties:\n";
-                            foreach (var prop in jsonObject)
-                            {
-                                OutputTextBlock.Text += $"  - {prop.Key}\n";
-                            }
                         }
 
                         return null;
@@ -194,7 +218,7 @@ namespace Store_Acquisition_Assistant
                     catch (Exception parseEx)
                     {
                         OutputTextBlock.Text += $"[✗] JSON Parse Error: {parseEx.Message}\n";
-                        OutputTextBlock.Text += $"First 1000 chars of response:\n{content.Substring(0, Math.Min(1000, content.Length))}\n";
+                        OutputTextBlock.Text += $"Stack Trace: {parseEx.StackTrace}\n";
                         throw;
                     }
                 }
