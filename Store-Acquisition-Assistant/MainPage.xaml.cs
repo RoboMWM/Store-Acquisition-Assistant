@@ -234,8 +234,9 @@ namespace Store_Acquisition_Assistant
         {
             try
             {
-                StorageFolder appFolder = ApplicationData.Current.LocalFolder;
-                StorageFolder newappFolder = await appFolder.GetFolderAsync("newapp");
+                // Access files from the app's installation directory
+                StorageFolder installedFolder = Windows.ApplicationModel.Package.Current.InstalledLocation;
+                StorageFolder newappFolder = await installedFolder.GetFolderAsync("newapp");
                 StorageFile manifestFile = await newappFolder.GetFileAsync("AppxManifest.template.xml");
 
                 if (manifestFile == null)
@@ -255,8 +256,9 @@ namespace Store_Acquisition_Assistant
                 {
                     identityElement.SetAttributeValue("Name", identityName);
                     
-                    // Also save a copy as AppxManifest.xml for deployment
-                    StorageFile deploymentManifest = await newappFolder.CreateFileAsync("AppxManifest.xml", CreationCollisionOption.ReplaceExisting);
+                    // Save to LocalFolder for access and deployment
+                    StorageFolder localFolder = ApplicationData.Current.LocalFolder;
+                    StorageFile deploymentManifest = await localFolder.CreateFileAsync("AppxManifest.xml", CreationCollisionOption.ReplaceExisting);
                     await FileIO.WriteTextAsync(deploymentManifest, doc.ToString());
                     
                     OutputTextBlock.Text += "[✓] Generated AppxManifest.xml for deployment\n";
@@ -276,12 +278,14 @@ namespace Store_Acquisition_Assistant
         {
             try
             {
-                StorageFolder appFolder = ApplicationData.Current.LocalFolder;
-                StorageFile jsFile = await appFolder.GetFileAsync("main.js");
+                // Access files from the app's installation directory
+                StorageFolder installedFolder = Windows.ApplicationModel.Package.Current.InstalledLocation;
+                StorageFolder newappFolder = await installedFolder.GetFolderAsync("newapp");
+                StorageFile jsFile = await newappFolder.GetFileAsync("main.js");
 
                 if (jsFile == null)
                 {
-                    OutputTextBlock.Text += "[!] main.js not found in LocalFolder\n";
+                    OutputTextBlock.Text += "[!] main.js not found in newapp folder\n";
                     return false;
                 }
 
@@ -290,7 +294,11 @@ namespace Store_Acquisition_Assistant
                 // Replace ONESTOREID with the product ID
                 string updatedContent = content.Replace("ONESTOREID", productId);
 
-                await FileIO.WriteTextAsync(jsFile, updatedContent);
+                // Save to LocalFolder
+                StorageFolder localFolder = ApplicationData.Current.LocalFolder;
+                StorageFile deploymentJs = await localFolder.CreateFileAsync("main.js", CreationCollisionOption.ReplaceExisting);
+                await FileIO.WriteTextAsync(deploymentJs, updatedContent);
+                
                 return true;
             }
             catch (Exception ex)
@@ -304,58 +312,62 @@ namespace Store_Acquisition_Assistant
         {
             try
             {
-                // Get the path to the newapp package
-                StorageFolder appFolder = ApplicationData.Current.LocalFolder;
-                StorageFolder newappFolder = await appFolder.GetFolderAsync("newapp");
+                // Get the updated configuration files from LocalFolder
+                StorageFolder localFolder = ApplicationData.Current.LocalFolder;
 
-                if (newappFolder == null)
+                // Check if manifest and main.js were updated
+                StorageFile manifestFile = await localFolder.GetFileAsync("AppxManifest.xml");
+                StorageFile jsFile = await localFolder.GetFileAsync("main.js");
+
+                if (manifestFile == null || jsFile == null)
                 {
-                    OutputTextBlock.Text += "[!] newapp folder not found\n";
+                    OutputTextBlock.Text += "[!] Configuration files not found in LocalFolder\n";
                     return false;
                 }
 
-                // Create the deployment options
-                var deploymentOptions = DeploymentOptions.None;
+                OutputTextBlock.Text += "[✓] Configuration files prepared\n";
+                OutputTextBlock.Text += $"[INFO] Manifest: {manifestFile.Path}\n";
+                OutputTextBlock.Text += $"[INFO] JS file: {jsFile.Path}\n\n";
 
-                // Get the package manager
+                // Now attempt deployment with packageManagement capability
+                OutputTextBlock.Text += "[INFO] Attempting package deployment...\n";
+
                 PackageManager pm = new PackageManager();
-
-                // For web app packages, we need to add the folder as an external location
-                // However, the PackageManager.AddPackageAsync requires a URI to a .appx package
-                // Since this is a web app manifest, we'll use an alternative approach
-
-                OutputTextBlock.Text += "[INFO] Attempting to register web app package from: ";
-                OutputTextBlock.Text += newappFolder.Path + "\n";
-
-                // Register the package from the local folder
-                // Note: This requires the app to have packageManagement capability
+                
                 try
                 {
+                    // Deploy the package from LocalFolder which contains the updated AppxManifest.xml
                     var deploymentResult = await pm.AddPackageAsync(
-                        new Uri(newappFolder.Path),
+                        new Uri(localFolder.Path),
                         null,
-                        deploymentOptions);
+                        DeploymentOptions.ForceApplicationShutdown);
 
                     if (deploymentResult.IsRegistered)
                     {
-                        OutputTextBlock.Text += "[✓] Package registered successfully\n";
+                        OutputTextBlock.Text += "[✓] Package deployed successfully!\n";
+                        OutputTextBlock.Text += $"[INFO] Package Family: {deploymentResult.PackageFamilyName}\n";
                         return true;
                     }
-                    else if (!string.IsNullOrEmpty(deploymentResult.ErrorText))
+                    else
                     {
-                        OutputTextBlock.Text += $"[!] Deployment error: {deploymentResult.ErrorText}\n";
+                        OutputTextBlock.Text += $"[!] Deployment failed - Not registered\n";
+                        if (!string.IsNullOrEmpty(deploymentResult.ErrorText))
+                        {
+                            OutputTextBlock.Text += $"[ERROR] {deploymentResult.ErrorText}\n";
+                        }
+                        return false;
                     }
-
-                    return deploymentResult.IsRegistered;
                 }
                 catch (Exception deployEx)
                 {
                     OutputTextBlock.Text += $"[!] Deployment exception: {deployEx.Message}\n";
+                    OutputTextBlock.Text += $"[DEBUG] HRESULT: 0x{deployEx.HResult:X8}\n";
                     
-                    // If direct deployment fails, we can still inform the user
-                    // that the configuration files have been updated
-                    OutputTextBlock.Text += "[INFO] Configuration files have been updated successfully.\n";
-                    OutputTextBlock.Text += "[INFO] You may need to deploy the app manually or sign the package.\n";
+                    // Provide guidance
+                    OutputTextBlock.Text += "\n[INFO] If deployment failed due to permissions:\n";
+                    OutputTextBlock.Text += "- The app may need to be signed as a system app\n";
+                    OutputTextBlock.Text += "- Or use 'Add-AppxPackage -Register' in PowerShell as admin\n";
+                    OutputTextBlock.Text += $"- Command: Add-AppxPackage -Register '{manifestFile.Path}'\n";
                     
                     return false;
                 }
