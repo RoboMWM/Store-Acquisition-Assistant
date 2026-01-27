@@ -131,7 +131,7 @@
     <None Include="Store-Acquisition-Assistant_TemporaryKey.pfx" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="newapp\AppxManifest.xml" />
+    <Content Include="newapp\AppxManifest.template.xml" />
     <Content Include="newapp\images\LockScreenLogo.scale-200.png" />
     <Content Include="newapp\images\splashscreen.png" />
     <Content Include="newapp\images\SplashScreen.scale-200.png" />
@@ -167,6 +167,10 @@
     </PackageReference>
   </ItemGroup>
   <ItemGroup />
+  <!-- Exclude AppxManifest.xml from newapp folder to prevent build conflicts -->
+  <ItemGroup>
+    <None Remove="newapp\AppxManifest.xml" />
+  </ItemGroup>
   <PropertyGroup Condition=" '$(VisualStudioVersion)' == '' or '$(VisualStudioVersion)' &lt; '14.0' ">
     <VisualStudioVersion>14.0</VisualStudioVersion>
   </PropertyGroup>

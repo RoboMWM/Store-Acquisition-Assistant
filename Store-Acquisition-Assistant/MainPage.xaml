@@ -27,8 +27,11 @@
             <TextBlock x:Name="IdentityTextBlock" Text="(will be fetched)" TextWrapping="Wrap" FontFamily="Courier New" Foreground="#0078D4"/>
         </StackPanel>
 
-        <ScrollViewer Height="200">
-            <TextBlock x:Name="OutputTextBlock" Text="Output will appear here..." TextWrapping="Wrap" FontFamily="Courier New" FontSize="12"/>
-        </ScrollViewer>
+        <StackPanel Margin="0,0,0,20">
+            <TextBlock Text="Output Log:" Margin="0,0,0,5"/>
+            <ScrollViewer Height="200" VerticalScrollBarVisibility="Auto">
+                <TextBox x:Name="OutputTextBlock" Text="Output will appear here..." TextWrapping="Wrap" FontFamily="Courier New" FontSize="12" IsReadOnly="True" MinHeight="200"/>
+            </ScrollViewer>
+        </StackPanel>
     </StackPanel>
 </Page>

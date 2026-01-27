@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Net.Http;
+using System.Xml;
 using System.Xml.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -125,38 +126,52 @@ namespace Store_Acquisition_Assistant
 
                     string content = await response.Content.ReadAsStringAsync();
                     OutputTextBlock.Text += $"[✓] HTTP 200 OK - Response received\n";
+                    OutputTextBlock.Text += $"Response length: {content.Length} bytes\n";
 
-                    // Parse the XML response
-                    XDocument doc = XDocument.Parse(content);
-                    XNamespace ns = "http://schemas.microsoft.com/appx/manifest/foundation/windows10";
+                    // Trim BOM if present
+                    content = content.TrimStart('\uFEFF');
 
-                    // Find the Identity element and extract the Name attribute
-                    var identityElement = doc.Descendants(ns + "Identity").FirstOrDefault();
-                    if (identityElement != null)
+                    try
                     {
-                        string identityName = identityElement.Attribute("Name")?.Value;
-                        if (!string.IsNullOrEmpty(identityName))
-                        {
-                            OutputTextBlock.Text += $"[✓] Parsed Identity from response\n";
-                            return identityName;
-                        }
-                    }
+                        // Parse the XML response
+                        XDocument doc = XDocument.Parse(content);
+                        XNamespace ns = "http://schemas.microsoft.com/appx/manifest/foundation/windows10";
 
-                    // If namespace didn't match, try without namespace
-                    var identityElementNoNs = doc.Root?.Element("Identity");
-                    if (identityElementNoNs != null)
+                        // Find the Identity element and extract the Name attribute
+                        var identityElement = doc.Descendants(ns + "Identity").FirstOrDefault();
+                        if (identityElement != null)
+                        {
+                            string identityName = identityElement.Attribute("Name")?.Value;
+                            if (!string.IsNullOrEmpty(identityName))
+                            {
+                                OutputTextBlock.Text += $"[✓] Parsed Identity from response\n";
+                                return identityName;
+                            }
+                        }
+
+                        // If namespace didn't match, try without namespace
+                        var identityElementNoNs = doc.Root?.Element("Identity");
+                        if (identityElementNoNs != null)
+                        {
+                            string identityName = identityElementNoNs.Attribute("Name")?.Value;
+                            if (!string.IsNullOrEmpty(identityName))
+                            {
+                                OutputTextBlock.Text += $"[✓] Parsed Identity from response (no namespace)\n";
+                                return identityName;
+                            }
+                        }
+
+                        OutputTextBlock.Text += "[!] Could not find Identity element in response\n";
+                        OutputTextBlock.Text += $"Root element: {doc.Root?.Name}\n";
+                        OutputTextBlock.Text += $"Response preview: {content.Substring(0, Math.Min(500, content.Length))}\n";
+                        return null;
+                    }
+                    catch (XmlException xmlEx)
                     {
-                        string identityName = identityElementNoNs.Attribute("Name")?.Value;
-                        if (!string.IsNullOrEmpty(identityName))
-                        {
-                            OutputTextBlock.Text += $"[✓] Parsed Identity from response (no namespace)\n";
-                            return identityName;
-                        }
+                        OutputTextBlock.Text += $"[✗] XML Parse Error: {xmlEx.Message}\n";
+                        OutputTextBlock.Text += $"First 1000 chars of response:\n{content.Substring(0, Math.Min(1000, content.Length))}\n";
+                        throw;
                     }
-
-                    OutputTextBlock.Text += "[!] Could not find Identity element in response\n";
-                    OutputTextBlock.Text += $"Response preview: {content.Substring(0, Math.Min(500, content.Length))}\n";
-                    return null;
                 }
                 catch (HttpRequestException httpEx)
                 {
@@ -171,11 +186,12 @@ namespace Store_Acquisition_Assistant
             try
             {
                 StorageFolder appFolder = ApplicationData.Current.LocalFolder;
-                StorageFile manifestFile = await appFolder.GetFileAsync("AppxManifest.xml");
+                StorageFolder newappFolder = await appFolder.GetFolderAsync("newapp");
+                StorageFile manifestFile = await newappFolder.GetFileAsync("AppxManifest.template.xml");
 
                 if (manifestFile == null)
                 {
-                    OutputTextBlock.Text += "[!] AppxManifest.xml not found in LocalFolder\n";
+                    OutputTextBlock.Text += "[!] AppxManifest.template.xml not found in newapp folder\n";
                     return false;
                 }
 
@@ -189,7 +205,12 @@ namespace Store_Acquisition_Assistant
                 if (identityElement != null)
                 {
                     identityElement.SetAttributeValue("Name", identityName);
-                    await FileIO.WriteTextAsync(manifestFile, doc.ToString());
+                    
+                    // Also save a copy as AppxManifest.xml for deployment
+                    StorageFile deploymentManifest = await newappFolder.CreateFileAsync("AppxManifest.xml", CreationCollisionOption.ReplaceExisting);
+                    await FileIO.WriteTextAsync(deploymentManifest, doc.ToString());
+                    
+                    OutputTextBlock.Text += "[✓] Generated AppxManifest.xml for deployment\n";
                     return true;
                 }
 
