@@ -10,6 +10,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Windows.Foundation;
 using Windows.Foundation.Collections;
+using Windows.Data.Json;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Controls.Primitives;
@@ -133,42 +134,66 @@ namespace Store_Acquisition_Assistant
 
                     try
                     {
-                        // Parse the XML response
-                        XDocument doc = XDocument.Parse(content);
-                        XNamespace ns = "http://schemas.microsoft.com/appx/manifest/foundation/windows10";
+                        // Parse as JSON using Windows.Data.Json
+                        JsonObject jsonObject = JsonObject.Parse(content);
+                        OutputTextBlock.Text += $"[✓] Successfully parsed JSON response\n";
 
-                        // Find the Identity element and extract the Name attribute
-                        var identityElement = doc.Descendants(ns + "Identity").FirstOrDefault();
-                        if (identityElement != null)
+                        // Navigate through the JSON structure to find the identity information
+
+                        // FIX 1: Changed type from JsonValue to IJsonValue
+                        IJsonValue productValue;
+
+                        if (jsonObject.TryGetValue("Product", out productValue) && productValue.ValueType == JsonValueType.Object)
                         {
-                            string identityName = identityElement.Attribute("Name")?.Value;
-                            if (!string.IsNullOrEmpty(identityName))
+                            JsonObject productObject = productValue.GetObject();
+                            OutputTextBlock.Text += "[INFO] Found 'Product' object\n";
+
+                            // Try common property names for identity
+                            string[] identityProperties = { "PackageIdentityName", "IdentityName", "Identity", "Name" };
+
+                            foreach (var propName in identityProperties)
                             {
-                                OutputTextBlock.Text += $"[✓] Parsed Identity from response\n";
-                                return identityName;
+                                try
+                                {
+                                    // FIX 2: Changed type from JsonValue to IJsonValue
+                                    IJsonValue identityValue;
+
+                                    if (productObject.TryGetValue(propName, out identityValue) && identityValue.ValueType == JsonValueType.String)
+                                    {
+                                        string identityName = identityValue.GetString();
+                                        if (!string.IsNullOrEmpty(identityName))
+                                        {
+                                            OutputTextBlock.Text += $"[✓] Found Identity Name in '{propName}': {identityName}\n";
+                                            return identityName;
+                                        }
+                                    }
+                                }
+                                catch { }
+                            }
+
+                            // If not found in common properties, list available properties for debugging
+                            OutputTextBlock.Text += "[!] Identity not found in common properties.\n";
+                            OutputTextBlock.Text += "[INFO] Available properties in Product object:\n";
+                            foreach (var prop in productObject)
+                            {
+                                OutputTextBlock.Text += $"  - {prop.Key}\n";
+                            }
+                        }
+                        else
+                        {
+                            OutputTextBlock.Text += "[!] 'Product' property not found in JSON\n";
+                            OutputTextBlock.Text += "[INFO] Available root properties:\n";
+                            foreach (var prop in jsonObject)
+                            {
+                                OutputTextBlock.Text += $"  - {prop.Key}\n";
                             }
                         }
 
-                        // If namespace didn't match, try without namespace
-                        var identityElementNoNs = doc.Root?.Element("Identity");
-                        if (identityElementNoNs != null)
-                        {
-                            string identityName = identityElementNoNs.Attribute("Name")?.Value;
-                            if (!string.IsNullOrEmpty(identityName))
-                            {
-                                OutputTextBlock.Text += $"[✓] Parsed Identity from response (no namespace)\n";
-                                return identityName;
-                            }
-                        }
-
-                        OutputTextBlock.Text += "[!] Could not find Identity element in response\n";
-                        OutputTextBlock.Text += $"Root element: {doc.Root?.Name}\n";
-                        OutputTextBlock.Text += $"Response preview: {content.Substring(0, Math.Min(500, content.Length))}\n";
                         return null;
                     }
-                    catch (XmlException xmlEx)
+                    catch (Exception parseEx)
                     {
-                        OutputTextBlock.Text += $"[✗] XML Parse Error: {xmlEx.Message}\n";
+                        OutputTextBlock.Text += $"[✗] JSON Parse Error: {parseEx.Message}\n";
                         OutputTextBlock.Text += $"First 1000 chars of response:\n{content.Substring(0, Math.Min(1000, content.Length))}\n";
                         throw;
                     }
