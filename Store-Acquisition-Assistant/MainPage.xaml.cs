@@ -20,7 +20,6 @@ using Windows.UI.Xaml.Media;
 using Windows.UI.Xaml.Navigation;
 using Windows.Storage;
 using Windows.Management.Deployment;
-using Windows.Foundation.Collections;
 
 // The Blank Page item template is documented at https://go.microsoft.com/fwlink/?LinkId=402352&clcid=0x409
 
@@ -91,9 +90,10 @@ namespace Store_Acquisition_Assistant
                 }
 
                 UpdateStatus("Deploying app...");
-                
+
                 // Deploy the app package
-                bool deployed = await DeployAppPackageAsync();
+                // FIXED: Passing identityName so we can look up the FamilyName later
+                bool deployed = await DeployAppPackageAsync(identityName);
                 if (deployed)
                 {
                     OutputTextBlock.Text += "[✓] App package deployed successfully!\n";
@@ -104,7 +104,7 @@ namespace Store_Acquisition_Assistant
                     OutputTextBlock.Text += "[!] Warning: App deployment completed with some messages\n";
                     UpdateStatus("App deployment completed");
                 }
-                
+
                 OutputTextBlock.Text += "\n[✓] Process complete!";
             }
             catch (Exception ex)
@@ -255,12 +255,12 @@ namespace Store_Acquisition_Assistant
                 if (identityElement != null)
                 {
                     identityElement.SetAttributeValue("Name", identityName);
-                    
+
                     // Save to LocalFolder for access and deployment
                     StorageFolder localFolder = ApplicationData.Current.LocalFolder;
                     StorageFile deploymentManifest = await localFolder.CreateFileAsync("AppxManifest.xml", CreationCollisionOption.ReplaceExisting);
                     await FileIO.WriteTextAsync(deploymentManifest, doc.ToString());
-                    
+
                     OutputTextBlock.Text += "[✓] Generated AppxManifest.xml for deployment\n";
                     return true;
                 }
@@ -298,7 +298,7 @@ namespace Store_Acquisition_Assistant
                 StorageFolder localFolder = ApplicationData.Current.LocalFolder;
                 StorageFile deploymentJs = await localFolder.CreateFileAsync("main.js", CreationCollisionOption.ReplaceExisting);
                 await FileIO.WriteTextAsync(deploymentJs, updatedContent);
-                
+
                 return true;
             }
             catch (Exception ex)
@@ -308,7 +308,8 @@ namespace Store_Acquisition_Assistant
             }
         }
 
-        private async Task<bool> DeployAppPackageAsync()
+        // FIXED: Added identityName parameter to look up package family later
+        private async Task<bool> DeployAppPackageAsync(string identityName)
         {
             try
             {
@@ -333,7 +334,7 @@ namespace Store_Acquisition_Assistant
                 OutputTextBlock.Text += "[INFO] Attempting package deployment...\n";
 
                 PackageManager pm = new PackageManager();
-                
+
                 try
                 {
                     // Deploy the package from LocalFolder which contains the updated AppxManifest.xml
@@ -345,7 +346,23 @@ namespace Store_Acquisition_Assistant
                     if (deploymentResult.IsRegistered)
                     {
                         OutputTextBlock.Text += "[✓] Package deployed successfully!\n";
-                        OutputTextBlock.Text += $"[INFO] Package Family: {deploymentResult.PackageFamilyName}\n";
+
+                        // FIXED: Look up the package manually since DeploymentResult doesn't have PackageFamilyName
+                        try
+                        {
+                            var pkg = pm.FindPackagesForUser(string.Empty)
+                                        .FirstOrDefault(p => p.Id.Name.Equals(identityName, StringComparison.OrdinalIgnoreCase));
+
+                            if (pkg != null)
+                            {
+                                OutputTextBlock.Text += $"[INFO] Package Family: {pkg.Id.FamilyName}\n";
+                            }
+                        }
+                        catch
+                        {
+                            OutputTextBlock.Text += "[INFO] Could not retrieve Package Family Name immediately.\n";
+                        }
+
                         return true;
                     }
                     else
@@ -362,13 +379,13 @@ namespace Store_Acquisition_Assistant
                 {
                     OutputTextBlock.Text += $"[!] Deployment exception: {deployEx.Message}\n";
                     OutputTextBlock.Text += $"[DEBUG] HRESULT: 0x{deployEx.HResult:X8}\n";
-                    
+
                     // Provide guidance
                     OutputTextBlock.Text += "\n[INFO] If deployment failed due to permissions:\n";
                     OutputTextBlock.Text += "- The app may need to be signed as a system app\n";
                     OutputTextBlock.Text += "- Or use 'Add-AppxPackage -Register' in PowerShell as admin\n";
                     OutputTextBlock.Text += $"- Command: Add-AppxPackage -Register '{manifestFile.Path}'\n";
-                    
+
                     return false;
                 }
             }
