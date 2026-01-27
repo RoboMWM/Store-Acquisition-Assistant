@@ -1,4 +1,11 @@
-// Your code here!
-Windows.Services.Store.StoreContext.getDefault().requestPurchaseAsync(ONESTOREID).then(function (result) { window.document.body.appendChild(window.document.createTextNode("Success Status " + result.status.toString() + "\nExtended error " + result.extendedError.toString())); }, function (result) { window.document.body.appendChild(window.document.createTextNode(result.toString())); });;
+// Store Product ID Configuration - Replace ONESTOREID with actual Store Product ID
+var ONESTOREID = "9NBLGGH5R558"; // Placeholder - will be replaced by Store-Acquisition-Assistant
+
+Windows.Services.Store.StoreContext.getDefault().requestPurchaseAsync(ONESTOREID).then(function (result) { 
+    window.document.body.appendChild(window.document.createTextNode("Success Status " + result.status.toString() + "\nExtended error " + result.extendedError.toString())); 
+}, function (result) { 
+    window.document.body.appendChild(window.document.createTextNode(result.toString())); 
+});
+
 window.document.body.appendChild(window.document.createTextNode(Windows.ApplicationModel.Package.current.id.familyName));
 window.document.body.appendChild(window.document.createTextNode("Hello!"));

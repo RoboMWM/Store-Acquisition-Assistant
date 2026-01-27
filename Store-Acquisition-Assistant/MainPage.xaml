@@ -8,8 +8,27 @@
     mc:Ignorable="d"
     Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
 
-    <StackPanel>
-        <TextBox x:Name="ProductIDTextBox" PlaceholderText="Enter Store ProductID here..."/>
-        <Button x:Name="GoButton" Content="Go" />
+    <StackPanel Padding="20">
+        <TextBlock Text="Store Product ID Configuration" Style="{StaticResource HeaderTextBlockStyle}" Margin="0,0,0,20"/>
+        
+        <StackPanel Margin="0,0,0,20">
+            <TextBlock Text="Enter Microsoft Store Product ID:" Margin="0,0,0,5"/>
+            <TextBox x:Name="ProductIDTextBox" PlaceholderText="e.g., 9NBLGGH5R558" Margin="0,0,0,10"/>
+            <Button x:Name="GoButton" Content="Fetch and Deploy" Padding="10,5" Background="#0078D4"/>
+        </StackPanel>
+
+        <StackPanel Margin="0,0,0,20">
+            <TextBlock Text="Status:" Margin="0,0,0,5"/>
+            <TextBlock x:Name="StatusTextBlock" Text="Ready" TextWrapping="Wrap" Foreground="#333333"/>
+        </StackPanel>
+
+        <StackPanel Margin="0,0,0,20">
+            <TextBlock Text="Identity Name:" Margin="0,0,0,5"/>
+            <TextBlock x:Name="IdentityTextBlock" Text="(will be fetched)" TextWrapping="Wrap" FontFamily="Courier New" Foreground="#0078D4"/>
+        </StackPanel>
+
+        <ScrollViewer Height="200">
+            <TextBlock x:Name="OutputTextBlock" Text="Output will appear here..." TextWrapping="Wrap" FontFamily="Courier New" FontSize="12"/>
+        </ScrollViewer>
     </StackPanel>
 </Page>

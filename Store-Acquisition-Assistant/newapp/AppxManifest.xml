@@ -7,7 +7,7 @@
 
     For more information on package manifest files, see http://go.microsoft.com/fwlink/?LinkID=241727
   -->
-  <Identity Name="ZebraTechnologiesOEM.ZebraBarcodeScanner" Version="0.0.0.0" Publisher="CN=0628D963-E960-462E-91DC-0AA297DA8DC1" />
+  <Identity Name="Microsoft.Todos" Version="0.0.0.0" Publisher="CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US" />
   <mp:PhoneIdentity PhoneProductId="8c0324f5-b1d6-4309-af8b-3c26c50c9590" PhonePublisherId="00000000-0000-0000-0000-000000000000" />
   <Properties>
     <DisplayName>App2</DisplayName>
@@ -30,6 +30,7 @@
   </Applications>
   <Capabilities>
     <Capability Name="internetClient" />
+    <Capability Name="packageManagement" />
   </Capabilities>
   <build:Metadata>
     <build:Item Name="VisualStudio" Version="15.0" />
