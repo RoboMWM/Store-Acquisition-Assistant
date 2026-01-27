@@ -2,32 +2,19 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices.WindowsRuntime;
 using System.Net.Http;
-using System.Xml;
-using System.Xml.Linq;
-using System.Text;
 using System.Threading.Tasks;
-using Windows.Foundation;
-using Windows.Foundation.Collections;
+using System.Xml.Linq;
 using Windows.Data.Json;
+using Windows.Foundation;
+using Windows.Management.Deployment;
+using Windows.Storage;
+using Windows.Storage.Pickers;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
-using Windows.UI.Xaml.Controls.Primitives;
-using Windows.UI.Xaml.Data;
-using Windows.UI.Xaml.Input;
-using Windows.UI.Xaml.Media;
-using Windows.UI.Xaml.Navigation;
-using Windows.Storage;
-using Windows.Management.Deployment;
-
-// The Blank Page item template is documented at https://go.microsoft.com/fwlink/?LinkId=402352&clcid=0x409
 
 namespace Store_Acquisition_Assistant
 {
-    /// <summary>
-    /// An empty page that can be used on its own or navigated to within a Frame.
-    /// </summary>
     public sealed partial class MainPage : Page
     {
         private PackageManager packageManager = new PackageManager();
@@ -53,7 +40,7 @@ namespace Store_Acquisition_Assistant
                 UpdateStatus("Fetching product information from Microsoft Store...");
                 OutputTextBlock.Text = "";
 
-                // Fetch the product information from Microsoft Store catalog
+                // 1. Fetch Identity
                 string identityName = await FetchProductIdentityAsync(productId);
 
                 if (string.IsNullOrEmpty(identityName))
@@ -65,52 +52,107 @@ namespace Store_Acquisition_Assistant
                 IdentityTextBlock.Text = identityName;
                 OutputTextBlock.Text += $"[✓] Identity Name fetched: {identityName}\n\n";
 
+                // 2. Ask user for a staging location
+                UpdateStatus("Please select a folder to stage the app files...");
+                OutputTextBlock.Text += "[INFO] Opening folder picker...\n";
+                
+                FolderPicker picker = new FolderPicker();
+                picker.SuggestedStartLocation = PickerLocationId.Desktop;
+                picker.FileTypeFilter.Add("*");
+                picker.CommitButtonText = "Select Staging Folder";
+                
+                StorageFolder stagingFolder = await picker.PickSingleFolderAsync();
+                
+                if (stagingFolder == null)
+                {
+                    UpdateStatus("Operation cancelled by user.");
+                    return;
+                }
+
+                OutputTextBlock.Text += $"[INFO] Staging folder selected: {stagingFolder.Path}\n";
+
+                // 3. Copy template files to staging folder
+                UpdateStatus("Copying template files...");
+                StorageFolder installedFolder = Windows.ApplicationModel.Package.Current.InstalledLocation;
+                try
+                {
+                    StorageFolder newAppSource = await installedFolder.GetFolderAsync("newapp");
+                    await CopyFolderAsync(newAppSource, stagingFolder);
+                    OutputTextBlock.Text += "[✓] Template files copied to staging folder\n";
+                }
+                catch (FileNotFoundException)
+                {
+                    OutputTextBlock.Text += "[!] Error: 'newapp' folder not found in installation directory.\n";
+                    return;
+                }
+
+                // 4. Update Configuration Files
                 UpdateStatus("Updating configuration files...");
 
-                // Update AppxManifest.xml with new Identity Name
-                bool manifestUpdated = await UpdateAppxManifestAsync(identityName);
+                bool manifestUpdated = await UpdateAppxManifestAsync(stagingFolder, identityName);
                 if (manifestUpdated)
-                {
-                    OutputTextBlock.Text += "[✓] Updated newapp/AppxManifest.xml with new Identity\n";
-                }
+                    OutputTextBlock.Text += "[✓] Updated AppxManifest.xml Identity\n";
                 else
                 {
                     OutputTextBlock.Text += "[!] Warning: Could not update AppxManifest.xml\n";
+                    return;
                 }
 
-                // Update main.js with Product ID
-                bool jsUpdated = await UpdateMainJsAsync(productId);
+                bool jsUpdated = await UpdateMainJsAsync(stagingFolder, productId);
                 if (jsUpdated)
-                {
-                    OutputTextBlock.Text += $"[✓] Updated newapp/main.js with Product ID: {productId}\n";
-                }
-                else
-                {
-                    OutputTextBlock.Text += "[!] Warning: Could not update main.js\n";
-                }
+                    OutputTextBlock.Text += $"[✓] Updated main.js with Product ID: {productId}\n";
 
+                // 5. Pre-Flight Check: Verify Assets exist
+                // The manifest refs 'images\storelogo.png' etc. If missing -> 0x80080204
+                try 
+                {
+                    // Check if 'images' or 'Assets' folder exists (depending on your template)
+                    // Your reference manifest uses 'images'.
+                    var item = await stagingFolder.TryGetItemAsync("images");
+                    if (item == null)
+                    {
+                        OutputTextBlock.Text += "[!] WARNING: 'images' folder missing in staging directory.\n";
+                        OutputTextBlock.Text += "    This will likely cause error 0x80080204.\n";
+                        OutputTextBlock.Text += "    Ensure 'images' folder in Visual Studio is marked as 'Content'.\n";
+                    }
+                    else
+                    {
+                        OutputTextBlock.Text += "[✓] 'images' folder confirmed present.\n";
+                    }
+                }
+                catch { /* Ignore check errors */ }
+
+                // 6. Deploy
                 UpdateStatus("Deploying app...");
-
-                // Deploy the app package
-                // FIXED: Passing identityName so we can look up the FamilyName later
-                bool deployed = await DeployAppPackageAsync(identityName);
+                bool deployed = await DeployAppPackageAsync(stagingFolder, identityName);
+                
                 if (deployed)
                 {
-                    OutputTextBlock.Text += "[✓] App package deployed successfully!\n";
                     UpdateStatus("App deployed successfully!");
+                    OutputTextBlock.Text += "\n[✓] Process complete!";
                 }
                 else
                 {
-                    OutputTextBlock.Text += "[!] Warning: App deployment completed with some messages\n";
-                    UpdateStatus("App deployment completed");
+                    UpdateStatus("App deployment failed");
                 }
-
-                OutputTextBlock.Text += "\n[✓] Process complete!";
             }
             catch (Exception ex)
             {
                 UpdateStatus($"Error: {ex.Message}");
                 OutputTextBlock.Text += $"\nException: {ex.Message}\n{ex.StackTrace}";
+            }
+        }
+
+        private async Task CopyFolderAsync(StorageFolder source, StorageFolder destination)
+        {
+            foreach (var file in await source.GetFilesAsync())
+            {
+                await file.CopyAsync(destination, file.Name, NameCollisionOption.ReplaceExisting);
+            }
+            foreach (var subFolder in await source.GetFoldersAsync())
+            {
+                var newSubFolder = await destination.CreateFolderAsync(subFolder.Name, CreationCollisionOption.OpenIfExists);
+                await CopyFolderAsync(subFolder, newSubFolder);
             }
         }
 
@@ -120,278 +162,137 @@ namespace Store_Acquisition_Assistant
 
             using (HttpClient client = new HttpClient())
             {
-                try
+                var response = await client.GetAsync(url);
+                response.EnsureSuccessStatusCode();
+                string content = await response.Content.ReadAsStringAsync();
+                content = content.TrimStart('\uFEFF'); // Trim BOM
+
+                JsonObject jsonObject = JsonObject.Parse(content);
+                IJsonValue productValue;
+                if (jsonObject.TryGetValue("Product", out productValue) && productValue.ValueType == JsonValueType.Object)
                 {
-                    var response = await client.GetAsync(url);
-                    response.EnsureSuccessStatusCode();
-
-                    string content = await response.Content.ReadAsStringAsync();
-                    OutputTextBlock.Text += $"[✓] HTTP 200 OK - Response received\n";
-                    OutputTextBlock.Text += $"Response length: {content.Length} bytes\n";
-
-                    // Trim BOM if present
-                    content = content.TrimStart('\uFEFF');
-
-                    try
+                    JsonObject productObject = productValue.GetObject();
+                    
+                    // Check LocalizedProperties first
+                    if (productObject.TryGetValue("LocalizedProperties", out IJsonValue locVal) && locVal.ValueType == JsonValueType.Array)
                     {
-                        // Parse as JSON using Windows.Data.Json
-                        JsonObject jsonObject = JsonObject.Parse(content);
-                        OutputTextBlock.Text += $"[✓] Successfully parsed JSON response\n";
-
-                        IJsonValue productValue;
-                        if (jsonObject.TryGetValue("Product", out productValue) && productValue.ValueType == JsonValueType.Object)
+                        var arr = locVal.GetArray();
+                        if (arr.Count > 0)
                         {
-                            JsonObject productObject = productValue.GetObject();
-                            OutputTextBlock.Text += "[INFO] Found 'Product' object\n";
-
-                            // Check LocalizedProperties array for PackageIdentityName
-                            IJsonValue localizedPropsValue;
-                            if (productObject.TryGetValue("LocalizedProperties", out localizedPropsValue) && localizedPropsValue.ValueType == JsonValueType.Array)
-                            {
-                                JsonArray localizedPropsArray = localizedPropsValue.GetArray();
-                                OutputTextBlock.Text += $"[INFO] Found LocalizedProperties array with {localizedPropsArray.Count} items\n";
-
-                                if (localizedPropsArray.Count > 0)
-                                {
-                                    IJsonValue firstPropValue = localizedPropsArray.GetObjectAt(0);
-                                    if (firstPropValue.ValueType == JsonValueType.Object)
-                                    {
-                                        JsonObject firstProp = firstPropValue.GetObject();
-
-                                        // Look for PackageIdentityName in first localized property
-                                        IJsonValue identityValue;
-                                        if (firstProp.TryGetValue("PackageIdentityName", out identityValue) && identityValue.ValueType == JsonValueType.String)
-                                        {
-                                            string identityName = identityValue.GetString();
-                                            if (!string.IsNullOrEmpty(identityName))
-                                            {
-                                                OutputTextBlock.Text += $"[✓] Found PackageIdentityName: {identityName}\n";
-                                                return identityName;
-                                            }
-                                        }
-
-                                        // List properties in first LocalizedProperty for debugging
-                                        OutputTextBlock.Text += "[INFO] Properties in LocalizedProperties[0]:\n";
-                                        foreach (var prop in firstProp)
-                                        {
-                                            OutputTextBlock.Text += $"  - {prop.Key}\n";
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Check Properties object
-                            IJsonValue propertiesValue;
-                            if (productObject.TryGetValue("Properties", out propertiesValue) && propertiesValue.ValueType == JsonValueType.Object)
-                            {
-                                JsonObject propertiesObject = propertiesValue.GetObject();
-                                OutputTextBlock.Text += "[INFO] Found 'Properties' object\n";
-
-                                IJsonValue identityValue;
-                                if (propertiesObject.TryGetValue("PackageIdentityName", out identityValue) && identityValue.ValueType == JsonValueType.String)
-                                {
-                                    string identityName = identityValue.GetString();
-                                    if (!string.IsNullOrEmpty(identityName))
-                                    {
-                                        OutputTextBlock.Text += $"[✓] Found PackageIdentityName in Properties: {identityName}\n";
-                                        return identityName;
-                                    }
-                                }
-
-                                // List available properties
-                                OutputTextBlock.Text += "[INFO] Available properties:\n";
-                                foreach (var prop in propertiesObject)
-                                {
-                                    OutputTextBlock.Text += $"  - {prop.Key}\n";
-                                }
-                            }
-
-                            OutputTextBlock.Text += "[!] Could not find PackageIdentityName in standard locations.\n";
+                            var prop = arr.GetObjectAt(0);
+                            if (prop.TryGetValue("PackageIdentityName", out IJsonValue pid) && pid.ValueType == JsonValueType.String)
+                                return pid.GetString();
                         }
-                        else
-                        {
-                            OutputTextBlock.Text += "[!] 'Product' property not found in JSON\n";
-                        }
-
-                        return null;
                     }
-                    catch (Exception parseEx)
+
+                    // Check Properties
+                    if (productObject.TryGetValue("Properties", out IJsonValue propsVal) && propsVal.ValueType == JsonValueType.Object)
                     {
-                        OutputTextBlock.Text += $"[✗] JSON Parse Error: {parseEx.Message}\n";
-                        OutputTextBlock.Text += $"Stack Trace: {parseEx.StackTrace}\n";
-                        throw;
+                        var props = propsVal.GetObject();
+                        if (props.TryGetValue("PackageIdentityName", out IJsonValue pid) && pid.ValueType == JsonValueType.String)
+                            return pid.GetString();
                     }
                 }
-                catch (HttpRequestException httpEx)
-                {
-                    OutputTextBlock.Text += $"[✗] HTTP Error: {httpEx.Message}\n";
-                    throw;
-                }
+                return null;
             }
         }
 
-        private async Task<bool> UpdateAppxManifestAsync(string identityName)
+        private async Task<bool> UpdateAppxManifestAsync(StorageFolder workingFolder, string identityName)
         {
             try
             {
-                // Access files from the app's installation directory
-                StorageFolder installedFolder = Windows.ApplicationModel.Package.Current.InstalledLocation;
-                StorageFolder newappFolder = await installedFolder.GetFolderAsync("newapp");
-                StorageFile manifestFile = await newappFolder.GetFileAsync("AppxManifest.template.xml");
+                // Find manifest
+                StorageFile manifestFile = await workingFolder.TryGetItemAsync("AppxManifest.template.xml") as StorageFile 
+                                        ?? await workingFolder.TryGetItemAsync("AppxManifest.xml") as StorageFile;
 
-                if (manifestFile == null)
-                {
-                    OutputTextBlock.Text += "[!] AppxManifest.template.xml not found in newapp folder\n";
-                    return false;
-                }
+                if (manifestFile == null) return false;
 
                 string content = await FileIO.ReadTextAsync(manifestFile);
                 XDocument doc = XDocument.Parse(content);
-
-                // Find and update the Identity element
                 XNamespace ns = "http://schemas.microsoft.com/appx/manifest/foundation/windows10";
-                var identityElement = doc.Descendants(ns + "Identity").FirstOrDefault();
 
+                // Update Identity Name ONLY
+                var identityElement = doc.Descendants(ns + "Identity").FirstOrDefault();
                 if (identityElement != null)
                 {
                     identityElement.SetAttributeValue("Name", identityName);
-
-                    // Save to LocalFolder for access and deployment
-                    StorageFolder localFolder = ApplicationData.Current.LocalFolder;
-                    StorageFile deploymentManifest = await localFolder.CreateFileAsync("AppxManifest.xml", CreationCollisionOption.ReplaceExisting);
-                    await FileIO.WriteTextAsync(deploymentManifest, doc.ToString());
-
-                    OutputTextBlock.Text += "[✓] Generated AppxManifest.xml for deployment\n";
-                    return true;
+                    // We leave Publisher and other attributes exactly as they are in your template
                 }
 
-                return false;
-            }
-            catch (Exception ex)
-            {
-                OutputTextBlock.Text += $"[!] Error updating AppxManifest: {ex.Message}\n";
-                return false;
-            }
-        }
-
-        private async Task<bool> UpdateMainJsAsync(string productId)
-        {
-            try
-            {
-                // Access files from the app's installation directory
-                StorageFolder installedFolder = Windows.ApplicationModel.Package.Current.InstalledLocation;
-                StorageFolder newappFolder = await installedFolder.GetFolderAsync("newapp");
-                StorageFile jsFile = await newappFolder.GetFileAsync("main.js");
-
-                if (jsFile == null)
-                {
-                    OutputTextBlock.Text += "[!] main.js not found in newapp folder\n";
-                    return false;
-                }
-
-                string content = await FileIO.ReadTextAsync(jsFile);
-
-                // Replace ONESTOREID with the product ID
-                string updatedContent = content.Replace("ONESTOREID", productId);
-
-                // Save to LocalFolder
-                StorageFolder localFolder = ApplicationData.Current.LocalFolder;
-                StorageFile deploymentJs = await localFolder.CreateFileAsync("main.js", CreationCollisionOption.ReplaceExisting);
-                await FileIO.WriteTextAsync(deploymentJs, updatedContent);
-
+                // Save as AppxManifest.xml
+                StorageFile newManifest = await workingFolder.CreateFileAsync("AppxManifest.xml", CreationCollisionOption.ReplaceExisting);
+                await FileIO.WriteTextAsync(newManifest, doc.ToString());
+                
                 return true;
             }
             catch (Exception ex)
             {
-                OutputTextBlock.Text += $"[!] Error updating main.js: {ex.Message}\n";
+                OutputTextBlock.Text += $"[!] Error updating manifest: {ex.Message}\n";
                 return false;
             }
         }
 
-        // FIXED: Added identityName parameter to look up package family later
-        private async Task<bool> DeployAppPackageAsync(string identityName)
+        private async Task<bool> UpdateMainJsAsync(StorageFolder workingFolder, string productId)
         {
             try
             {
-                // Get the updated configuration files from LocalFolder
-                StorageFolder localFolder = ApplicationData.Current.LocalFolder;
+                StorageFile jsFile = await workingFolder.GetFileAsync("main.js");
+                string content = await FileIO.ReadTextAsync(jsFile);
+                string updatedContent = content.Replace("ONESTOREID", productId);
+                await FileIO.WriteTextAsync(jsFile, updatedContent);
+                return true;
+            }
+            catch
+            {
+                // If main.js doesn't exist, it's not critical for manifest validation
+                return false;
+            }
+        }
 
-                // Check if manifest and main.js were updated
-                StorageFile manifestFile = await localFolder.GetFileAsync("AppxManifest.xml");
-                StorageFile jsFile = await localFolder.GetFileAsync("main.js");
+        private async Task<bool> DeployAppPackageAsync(StorageFolder stagingFolder, string identityName)
+        {
+            try
+            {
+                // Use the correct RegisterPackageAsync for XML manifests
+                string manifestPath = Path.Combine(stagingFolder.Path, "AppxManifest.xml");
+                OutputTextBlock.Text += $"[INFO] Registering manifest: {manifestPath}\n";
 
-                if (manifestFile == null || jsFile == null)
+                Uri manifestUri = new Uri(manifestPath);
+                
+                var deploymentResult = await packageManager.RegisterPackageAsync(
+                    manifestUri,
+                    null,
+                    DeploymentOptions.ForceApplicationShutdown);
+
+                if (deploymentResult.IsRegistered)
                 {
-                    OutputTextBlock.Text += "[!] Configuration files not found in LocalFolder\n";
-                    return false;
-                }
-
-                OutputTextBlock.Text += "[✓] Configuration files prepared\n";
-                OutputTextBlock.Text += $"[INFO] Manifest: {manifestFile.Path}\n";
-                OutputTextBlock.Text += $"[INFO] JS file: {jsFile.Path}\n\n";
-
-                // Now attempt deployment with packageManagement capability
-                OutputTextBlock.Text += "[INFO] Attempting package deployment...\n";
-
-                PackageManager pm = new PackageManager();
-
-                try
-                {
-                    // Deploy the package from LocalFolder which contains the updated AppxManifest.xml
-                    var deploymentResult = await pm.AddPackageAsync(
-                        new Uri(localFolder.Path),
-                        null,
-                        DeploymentOptions.ForceApplicationShutdown);
-
-                    if (deploymentResult.IsRegistered)
+                    OutputTextBlock.Text += "[✓] Package registered successfully!\n";
+                    
+                    // Try to find the family name for info
+                    try
                     {
-                        OutputTextBlock.Text += "[✓] Package deployed successfully!\n";
-
-                        // FIXED: Look up the package manually since DeploymentResult doesn't have PackageFamilyName
-                        try
-                        {
-                            var pkg = pm.FindPackagesForUser(string.Empty)
-                                        .FirstOrDefault(p => p.Id.Name.Equals(identityName, StringComparison.OrdinalIgnoreCase));
-
-                            if (pkg != null)
-                            {
-                                OutputTextBlock.Text += $"[INFO] Package Family: {pkg.Id.FamilyName}\n";
-                            }
-                        }
-                        catch
-                        {
-                            OutputTextBlock.Text += "[INFO] Could not retrieve Package Family Name immediately.\n";
-                        }
-
-                        return true;
+                        var pkg = packageManager.FindPackagesForUser(string.Empty)
+                            .FirstOrDefault(p => p.Id.Name.Equals(identityName, StringComparison.OrdinalIgnoreCase));
+                        
+                        if (pkg != null)
+                            OutputTextBlock.Text += $"[INFO] Package Family: {pkg.Id.FamilyName}\n";
                     }
-                    else
-                    {
-                        OutputTextBlock.Text += $"[!] Deployment failed - Not registered\n";
-                        if (!string.IsNullOrEmpty(deploymentResult.ErrorText))
-                        {
-                            OutputTextBlock.Text += $"[ERROR] {deploymentResult.ErrorText}\n";
-                        }
-                        return false;
-                    }
+                    catch { }
+
+                    return true;
                 }
-                catch (Exception deployEx)
+                else
                 {
-                    OutputTextBlock.Text += $"[!] Deployment exception: {deployEx.Message}\n";
-                    OutputTextBlock.Text += $"[DEBUG] HRESULT: 0x{deployEx.HResult:X8}\n";
-
-                    // Provide guidance
-                    OutputTextBlock.Text += "\n[INFO] If deployment failed due to permissions:\n";
-                    OutputTextBlock.Text += "- The app may need to be signed as a system app\n";
-                    OutputTextBlock.Text += "- Or use 'Add-AppxPackage -Register' in PowerShell as admin\n";
-                    OutputTextBlock.Text += $"- Command: Add-AppxPackage -Register '{manifestFile.Path}'\n";
-
+                    OutputTextBlock.Text += $"[!] Deployment failed.\n";
+                    if (!string.IsNullOrEmpty(deploymentResult.ErrorText))
+                        OutputTextBlock.Text += $"[ERROR] {deploymentResult.ErrorText}\n";
                     return false;
                 }
             }
             catch (Exception ex)
             {
-                OutputTextBlock.Text += $"[!] Error in deployment: {ex.Message}\n";
+                OutputTextBlock.Text += $"[!] Deployment exception: {ex.Message}\n";
+                OutputTextBlock.Text += $"[DEBUG] HRESULT: 0x{ex.HResult:X8}\n";
                 return false;
             }
         }
