@@ -78,7 +78,8 @@ namespace Store_Acquisition_Assistant
                 {
                     StorageFolder newAppSource = await installedFolder.GetFolderAsync("newapp");
                     await CopyFolderAsync(newAppSource, stagingFolder);
-                    OutputTextBlock.Text += "[✓] Template files copied to staging folder\n";
+                    OutputTextBlock.Text += "[✓] App template copied to staging folder\n";
+                    OutputTextBlock.Text += "[INFO] Assets are self-contained in the staging folder\n";
                 }
                 catch (FileNotFoundException)
                 {
@@ -103,17 +104,15 @@ namespace Store_Acquisition_Assistant
                     OutputTextBlock.Text += $"[✓] Updated main.js with Product ID: {productId}\n";
 
                 // 5. Pre-Flight Check: Verify Assets exist
-                // The manifest refs 'images\storelogo.png' etc. If missing -> 0x80080204
+                // The manifest refs 'images\storelogo.png' etc. 
+                // These should be in the newapp folder that was copied.
                 try 
                 {
-                    // Check if 'images' or 'Assets' folder exists (depending on your template)
-                    // Your reference manifest uses 'images'.
                     var item = await stagingFolder.TryGetItemAsync("images");
                     if (item == null)
                     {
                         OutputTextBlock.Text += "[!] WARNING: 'images' folder missing in staging directory.\n";
-                        OutputTextBlock.Text += "    This will likely cause error 0x80080204.\n";
-                        OutputTextBlock.Text += "    Ensure 'images' folder in Visual Studio is marked as 'Content'.\n";
+                        OutputTextBlock.Text += "    Ensure 'images' folder exists in the 'newapp' project folder.\n";
                     }
                     else
                     {
