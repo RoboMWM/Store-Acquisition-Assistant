@@ -121,9 +121,20 @@ namespace Store_Acquisition_Assistant
                 }
                 catch { /* Ignore check errors */ }
 
+                // 6. Copy to LocalFolder for registration
+                UpdateStatus("Preparing deployment...");
+                OutputTextBlock.Text += "[INFO] Copying to app's local storage...\n";
+                
+                StorageFolder localFolder = ApplicationData.Current.LocalFolder;
+                StorageFolder deployFolder = await localFolder.CreateFolderAsync("deploy", CreationCollisionOption.ReplaceExisting);
+                
+                // Copy all files from staging to deploy folder
+                await CopyFolderAsync(stagingFolder, deployFolder);
+                OutputTextBlock.Text += "[✓] Files copied to local storage\n";
+
                 // 6. Deploy
                 UpdateStatus("Deploying app...");
-                bool deployed = await DeployAppPackageAsync(stagingFolder, identityName);
+                bool deployed = await DeployAppPackageAsync(deployFolder, identityName);
                 
                 if (deployed)
                 {
@@ -248,33 +259,44 @@ namespace Store_Acquisition_Assistant
             }
         }
 
-        private async Task<bool> DeployAppPackageAsync(StorageFolder stagingFolder, string identityName)
+        private async Task<bool> DeployAppPackageAsync(StorageFolder deployFolder, string identityName)
         {
             try
             {
-                // Use the correct RegisterPackageAsync for XML manifests
-                string manifestPath = Path.Combine(stagingFolder.Path, "AppxManifest.xml");
-                OutputTextBlock.Text += $"[INFO] Registering manifest: {manifestPath}\n";
+                string manifestPath = Path.Combine(deployFolder.Path, "AppxManifest.xml");
+                OutputTextBlock.Text += $"[INFO] Deploy folder: {deployFolder.Path}\n";
+                OutputTextBlock.Text += $"[INFO] Manifest: {manifestPath}\n";
 
+                // Verify we can access the manifest file
+                StorageFile manifestFile = await deployFolder.GetFileAsync("AppxManifest.xml");
+                if (manifestFile == null)
+                {
+                    OutputTextBlock.Text += "[!] Cannot access AppxManifest.xml\n";
+                    return false;
+                }
+                OutputTextBlock.Text += "[✓] AppxManifest.xml is accessible\n";
+
+                // Try RegisterPackageAsync with manifest file URI (what PowerShell uses)
                 Uri manifestUri = new Uri(manifestPath);
-                
+                OutputTextBlock.Text += $"[INFO] Manifest URI: {manifestUri}\n";
+                OutputTextBlock.Text += $"[INFO] Attempting RegisterPackageAsync...\n";
+
                 var deploymentResult = await packageManager.RegisterPackageAsync(
                     manifestUri,
                     null,
-                    DeploymentOptions.ForceApplicationShutdown);
+                    DeploymentOptions.None);
 
                 if (deploymentResult.IsRegistered)
                 {
                     OutputTextBlock.Text += "[✓] Package registered successfully!\n";
                     
-                    // Try to find the family name for info
                     try
                     {
                         var pkg = packageManager.FindPackagesForUser(string.Empty)
                             .FirstOrDefault(p => p.Id.Name.Equals(identityName, StringComparison.OrdinalIgnoreCase));
                         
                         if (pkg != null)
-                            OutputTextBlock.Text += $"[INFO] Package Family: {pkg.Id.FamilyName}\n";
+                            OutputTextBlock.Text += $"[✓] Package Family: {pkg.Id.FamilyName}\n";
                     }
                     catch { }
 
@@ -282,16 +304,32 @@ namespace Store_Acquisition_Assistant
                 }
                 else
                 {
-                    OutputTextBlock.Text += $"[!] Deployment failed.\n";
+                    OutputTextBlock.Text += $"[!] Deployment failed - IsRegistered is false\n";
                     if (!string.IsNullOrEmpty(deploymentResult.ErrorText))
                         OutputTextBlock.Text += $"[ERROR] {deploymentResult.ErrorText}\n";
+                    
+                    if (deploymentResult.ActivityId != Guid.Empty)
+                        OutputTextBlock.Text += $"[INFO] Activity ID: {deploymentResult.ActivityId}\n";
+                    
                     return false;
                 }
             }
             catch (Exception ex)
             {
-                OutputTextBlock.Text += $"[!] Deployment exception: {ex.Message}\n";
+                OutputTextBlock.Text += $"[!] Exception: {ex.Message}\n";
                 OutputTextBlock.Text += $"[DEBUG] HRESULT: 0x{ex.HResult:X8}\n";
+                OutputTextBlock.Text += $"[DEBUG] Type: {ex.GetType().Name}\n";
+                
+                if (ex.InnerException != null)
+                    OutputTextBlock.Text += $"[DEBUG] Inner: {ex.InnerException.Message}\n";
+                
+                // Provide debugging suggestions
+                OutputTextBlock.Text += $"\n[INFO] Troubleshooting:\n";
+                OutputTextBlock.Text += $"- Verify AppxManifest.xml is valid XML\n";
+                OutputTextBlock.Text += $"- Check that Identity Name, Publisher, and Version are correct\n";
+                OutputTextBlock.Text += $"- Ensure all referenced assets exist (images folder, etc.)\n";
+                OutputTextBlock.Text += $"- Verify the app has restricted 'packageManagement' capability declared\n";
+                
                 return false;
             }
         }
