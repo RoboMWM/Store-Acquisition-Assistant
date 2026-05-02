@@ -14,7 +14,10 @@
         <StackPanel Margin="0,0,0,20">
             <TextBlock Text="Enter Microsoft Store Product ID:" Margin="0,0,0,5"/>
             <TextBox x:Name="ProductIDTextBox" PlaceholderText="e.g., 9NBLGGH5R558" Margin="0,0,0,10"/>
-            <Button x:Name="GoButton" Content="Fetch and Deploy" Padding="10,5" Background="#0078D4"/>
+            <StackPanel Orientation="Horizontal">
+                <Button x:Name="GoButton" Content="Fetch and Deploy" Padding="10,5" Background="#0078D4"/>
+                <Button x:Name="ChangeFolderButton" Content="Change Staging Folder" Padding="10,5" Margin="8,0,0,0"/>
+            </StackPanel>
         </StackPanel>
 
         <StackPanel Margin="0,0,0,20">

@@ -5,10 +5,13 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using Windows.ApplicationModel;
+using Windows.ApplicationModel.Core;
 using Windows.Data.Json;
 using Windows.Foundation;
 using Windows.Management.Deployment;
 using Windows.Storage;
+using Windows.Storage.AccessCache;
 using Windows.Storage.Pickers;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
@@ -17,6 +20,8 @@ namespace Store_Acquisition_Assistant
 {
     public sealed partial class MainPage : Page
     {
+        private const string StagingFolderTokenSetting = "StagingFolderToken";
+
         private PackageManager packageManager = new PackageManager();
 
         private sealed class ProductIdentity
@@ -29,6 +34,21 @@ namespace Store_Acquisition_Assistant
         {
             this.InitializeComponent();
             this.GoButton.Click += GoButton_Click;
+            this.ChangeFolderButton.Click += ChangeFolderButton_Click;
+        }
+
+        private async void ChangeFolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            StorageFolder folder = await PickStagingFolderAsync();
+            if (folder == null)
+            {
+                UpdateStatus("Folder unchanged.");
+                return;
+            }
+
+            SaveStagingFolder(folder);
+            UpdateStatus("Staging folder saved.");
+            OutputTextBlock.Text += $"[INFO] Staging folder: {folder.Path}\n";
         }
 
         private async void GoButton_Click(object sender, RoutedEventArgs e)
@@ -59,26 +79,31 @@ namespace Store_Acquisition_Assistant
                 OutputTextBlock.Text += $"[✓] Identity Name fetched: {identity.Name}\n";
                 OutputTextBlock.Text += $"[✓] Identity Publisher fetched: {identity.Publisher}\n\n";
 
-                // 2. Ask user for a staging location
-                UpdateStatus("Please select a folder to stage the app files...");
-                OutputTextBlock.Text += "[INFO] Opening folder picker...\n";
-                
-                FolderPicker picker = new FolderPicker();
-                picker.SuggestedStartLocation = PickerLocationId.Desktop;
-                picker.FileTypeFilter.Add("*");
-                picker.CommitButtonText = "Select Staging Folder";
-                
-                StorageFolder stagingFolder = await picker.PickSingleFolderAsync();
-                
+                // 2. Use remembered staging folder. First run asks once; later deploys reuse it.
+                UpdateStatus("Preparing staging folder...");
+                StorageFolder stagingFolder = await GetSavedStagingFolderAsync();
                 if (stagingFolder == null)
                 {
-                    UpdateStatus("Operation cancelled by user.");
-                    return;
+                    OutputTextBlock.Text += "[INFO] No saved staging folder. Opening folder picker...\n";
+                    stagingFolder = await PickStagingFolderAsync();
+                    if (stagingFolder == null)
+                    {
+                        UpdateStatus("Operation cancelled by user.");
+                        return;
+                    }
+
+                    SaveStagingFolder(stagingFolder);
                 }
 
-                OutputTextBlock.Text += $"[INFO] Staging folder selected: {stagingFolder.Path}\n";
+                OutputTextBlock.Text += $"[INFO] Staging folder: {stagingFolder.Path}\n";
 
-                // 3. Copy template files to staging folder
+                await UninstallExistingPackageAsync(identity.Name);
+
+                // 3. Clear and copy template files to staging folder
+                UpdateStatus("Clearing staging folder...");
+                await ClearFolderAsync(stagingFolder);
+                OutputTextBlock.Text += "[✓] Staging folder cleared\n";
+
                 UpdateStatus("Copying template files...");
                 StorageFolder installedFolder = Windows.ApplicationModel.Package.Current.InstalledLocation;
                 try
@@ -135,7 +160,8 @@ namespace Store_Acquisition_Assistant
                 if (deployed)
                 {
                     UpdateStatus("App deployed successfully!");
-                    OutputTextBlock.Text += "\n[✓] Process complete!";
+                    OutputTextBlock.Text += "\n[✓] Process complete!\n";
+                    await LaunchPackageAsync(identity.Name);
                 }
                 else
                 {
@@ -159,6 +185,114 @@ namespace Store_Acquisition_Assistant
             {
                 var newSubFolder = await destination.CreateFolderAsync(subFolder.Name, CreationCollisionOption.OpenIfExists);
                 await CopyFolderAsync(subFolder, newSubFolder);
+            }
+        }
+
+        private async Task ClearFolderAsync(StorageFolder folder)
+        {
+            foreach (var file in await folder.GetFilesAsync())
+            {
+                await file.DeleteAsync(StorageDeleteOption.PermanentDelete);
+            }
+
+            foreach (var subFolder in await folder.GetFoldersAsync())
+            {
+                await subFolder.DeleteAsync(StorageDeleteOption.PermanentDelete);
+            }
+        }
+
+        private async Task<StorageFolder> GetSavedStagingFolderAsync()
+        {
+            object tokenValue = ApplicationData.Current.LocalSettings.Values[StagingFolderTokenSetting];
+            string token = tokenValue as string;
+            if (string.IsNullOrEmpty(token))
+                return null;
+
+            try
+            {
+                return await StorageApplicationPermissions.FutureAccessList.GetFolderAsync(token);
+            }
+            catch
+            {
+                ApplicationData.Current.LocalSettings.Values.Remove(StagingFolderTokenSetting);
+                if (StorageApplicationPermissions.FutureAccessList.ContainsItem(token))
+                    StorageApplicationPermissions.FutureAccessList.Remove(token);
+                return null;
+            }
+        }
+
+        private async Task<StorageFolder> PickStagingFolderAsync()
+        {
+            FolderPicker picker = new FolderPicker();
+            picker.SuggestedStartLocation = PickerLocationId.Desktop;
+            picker.FileTypeFilter.Add("*");
+            picker.CommitButtonText = "Use Staging Folder";
+
+            return await picker.PickSingleFolderAsync();
+        }
+
+        private void SaveStagingFolder(StorageFolder folder)
+        {
+            object oldTokenValue = ApplicationData.Current.LocalSettings.Values[StagingFolderTokenSetting];
+            string oldToken = oldTokenValue as string;
+            if (!string.IsNullOrEmpty(oldToken) && StorageApplicationPermissions.FutureAccessList.ContainsItem(oldToken))
+                StorageApplicationPermissions.FutureAccessList.Remove(oldToken);
+
+            string token = StorageApplicationPermissions.FutureAccessList.Add(folder);
+            ApplicationData.Current.LocalSettings.Values[StagingFolderTokenSetting] = token;
+        }
+
+        private async Task UninstallExistingPackageAsync(string identityName)
+        {
+            Package existingPackage = packageManager.FindPackagesForUser(string.Empty)
+                .FirstOrDefault(p => p.Id.Name.Equals(identityName, StringComparison.OrdinalIgnoreCase));
+
+            if (existingPackage == null)
+            {
+                OutputTextBlock.Text += "[INFO] Existing package not installed. Skipping uninstall.\n";
+                return;
+            }
+
+            UpdateStatus("Uninstalling existing package...");
+            OutputTextBlock.Text += $"[INFO] Removing package: {existingPackage.Id.FullName}\n";
+
+            DeploymentResult result = await packageManager.RemovePackageAsync(existingPackage.Id.FullName);
+            if (!string.IsNullOrEmpty(result.ErrorText))
+            {
+                OutputTextBlock.Text += $"[INFO] Uninstall result: {result.ErrorText}\n";
+                throw new InvalidOperationException(result.ErrorText);
+            }
+
+            OutputTextBlock.Text += "[✓] Existing package removed\n";
+        }
+
+        private async Task LaunchPackageAsync(string identityName)
+        {
+            try
+            {
+                Package package = packageManager.FindPackagesForUser(string.Empty)
+                    .FirstOrDefault(p => p.Id.Name.Equals(identityName, StringComparison.OrdinalIgnoreCase));
+
+                if (package == null)
+                {
+                    OutputTextBlock.Text += "[!] Could not find deployed package to launch.\n";
+                    return;
+                }
+
+                IReadOnlyList<AppListEntry> entries = await package.GetAppListEntriesAsync();
+                AppListEntry entry = entries.FirstOrDefault();
+                if (entry == null)
+                {
+                    OutputTextBlock.Text += "[!] Deployed package has no app entry to launch.\n";
+                    return;
+                }
+
+                bool launched = await entry.LaunchAsync();
+                OutputTextBlock.Text += launched ? "[✓] App launched\n" : "[!] App launch returned false\n";
+            }
+            catch (Exception ex)
+            {
+                OutputTextBlock.Text += $"[!] Launch failed: {ex.Message}\n";
             }
         }
 
