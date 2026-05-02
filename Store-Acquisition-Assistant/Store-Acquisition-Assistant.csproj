@@ -132,14 +132,30 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="newapp\AppxManifest.template.xml" />
-    <Content Include="newapp\images\LockScreenLogo.scale-200.png" />
-    <Content Include="newapp\images\splashscreen.png" />
-    <Content Include="newapp\images\SplashScreen.scale-200.png" />
-    <Content Include="newapp\images\Square150x150Logo.scale-200.png" />
-    <Content Include="newapp\images\Square44x44Logo.scale-200.png" />
-    <Content Include="newapp\images\Square44x44Logo.targetsize-24_altform-unplated.png" />
-    <Content Include="newapp\images\StoreLogo.png" />
-    <Content Include="newapp\images\Wide310x150Logo.scale-200.png" />
+    <Content Include="newapp\images\LockScreenLogo.scale-200.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="newapp\images\splashscreen.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="newapp\images\SplashScreen.scale-200.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="newapp\images\Square150x150Logo.scale-200.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="newapp\images\Square44x44Logo.scale-200.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="newapp\images\Square44x44Logo.targetsize-24_altform-unplated.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="newapp\images\StoreLogo.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="newapp\images\Wide310x150Logo.scale-200.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
     <Content Include="newapp\index.html" />
     <Content Include="newapp\main.js" />
     <Content Include="Properties\Default.rd.xml" />
