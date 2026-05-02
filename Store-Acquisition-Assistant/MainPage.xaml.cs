@@ -128,20 +128,9 @@ namespace Store_Acquisition_Assistant
                 }
                 catch { /* Ignore check errors */ }
 
-                // 6. Copy to LocalFolder for registration
-                UpdateStatus("Preparing deployment...");
-                OutputTextBlock.Text += "[INFO] Copying to app's local storage...\n";
-                
-                StorageFolder localFolder = ApplicationData.Current.LocalFolder;
-                StorageFolder deployFolder = await localFolder.CreateFolderAsync("deploy", CreationCollisionOption.ReplaceExisting);
-                
-                // Copy all files from staging to deploy folder
-                await CopyFolderAsync(stagingFolder, deployFolder);
-                OutputTextBlock.Text += "[✓] Files copied to local storage\n";
-
-                // 6. Deploy
+                // 6. Deploy from the picked staging folder. PowerShell loose registration uses this same location.
                 UpdateStatus("Deploying app...");
-                bool deployed = await DeployAppPackageAsync(deployFolder, identity.Name);
+                bool deployed = await DeployAppPackageAsync(stagingFolder, identity.Name);
                 
                 if (deployed)
                 {
@@ -295,15 +284,20 @@ namespace Store_Acquisition_Assistant
                 }
                 OutputTextBlock.Text += "[✓] AppxManifest.xml is accessible\n";
 
-                // Try RegisterPackageAsync with manifest file URI (what PowerShell uses)
+                // Try RegisterPackageByUriAsync with manifest file URI (what PowerShell uses)
                 Uri manifestUri = new Uri(manifestPath);
                 OutputTextBlock.Text += $"[INFO] Manifest URI: {manifestUri}\n";
-                OutputTextBlock.Text += $"[INFO] Attempting RegisterPackageAsync...\n";
+                OutputTextBlock.Text += $"[INFO] Attempting RegisterPackageByUriAsync...\n";
 
-                var deploymentResult = await packageManager.RegisterPackageAsync(
-                    manifestUri,
-                    null,
-                    DeploymentOptions.None);
+                var options = new RegisterPackageOptions
+                {
+                    AllowUnsigned = true,
+                    DeveloperMode = true,
+                    StageInPlace = true
+                };
+                OutputTextBlock.Text += "[INFO] Options: AllowUnsigned=True, DeveloperMode=True, StageInPlace=True\n";
+
+                var deploymentResult = await packageManager.RegisterPackageByUriAsync(manifestUri, options);
 
                 if (deploymentResult.IsRegistered)
                 {
