@@ -19,6 +19,12 @@ namespace Store_Acquisition_Assistant
     {
         private PackageManager packageManager = new PackageManager();
 
+        private sealed class ProductIdentity
+        {
+            public string Name { get; set; }
+            public string Publisher { get; set; }
+        }
+
         public MainPage()
         {
             this.InitializeComponent();
@@ -41,16 +47,17 @@ namespace Store_Acquisition_Assistant
                 OutputTextBlock.Text = "";
 
                 // 1. Fetch Identity
-                string identityName = await FetchProductIdentityAsync(productId);
+                ProductIdentity identity = await FetchProductIdentityAsync(productId);
 
-                if (string.IsNullOrEmpty(identityName))
+                if (identity == null || string.IsNullOrEmpty(identity.Name) || string.IsNullOrEmpty(identity.Publisher))
                 {
-                    UpdateStatus("Error: Could not extract Identity Name from product data");
+                    UpdateStatus("Error: Could not extract Identity Name and Publisher from product data");
                     return;
                 }
 
-                IdentityTextBlock.Text = identityName;
-                OutputTextBlock.Text += $"[✓] Identity Name fetched: {identityName}\n\n";
+                IdentityTextBlock.Text = $"{identity.Name}\n{identity.Publisher}";
+                OutputTextBlock.Text += $"[✓] Identity Name fetched: {identity.Name}\n";
+                OutputTextBlock.Text += $"[✓] Identity Publisher fetched: {identity.Publisher}\n\n";
 
                 // 2. Ask user for a staging location
                 UpdateStatus("Please select a folder to stage the app files...");
@@ -90,7 +97,7 @@ namespace Store_Acquisition_Assistant
                 // 4. Update Configuration Files
                 UpdateStatus("Updating configuration files...");
 
-                bool manifestUpdated = await UpdateAppxManifestAsync(stagingFolder, identityName);
+                bool manifestUpdated = await UpdateAppxManifestAsync(stagingFolder, identity);
                 if (manifestUpdated)
                     OutputTextBlock.Text += "[✓] Updated AppxManifest.xml Identity\n";
                 else
@@ -134,7 +141,7 @@ namespace Store_Acquisition_Assistant
 
                 // 6. Deploy
                 UpdateStatus("Deploying app...");
-                bool deployed = await DeployAppPackageAsync(deployFolder, identityName);
+                bool deployed = await DeployAppPackageAsync(deployFolder, identity.Name);
                 
                 if (deployed)
                 {
@@ -166,7 +173,7 @@ namespace Store_Acquisition_Assistant
             }
         }
 
-        private async Task<string> FetchProductIdentityAsync(string productId)
+        private async Task<ProductIdentity> FetchProductIdentityAsync(string productId)
         {
             string url = $"https://displaycatalog.mp.microsoft.com/v7.0/products/{productId}/0010?fieldsTemplate=InstallAgent&market=US&languages=en-US,en,impartial";
 
@@ -183,31 +190,43 @@ namespace Store_Acquisition_Assistant
                 {
                     JsonObject productObject = productValue.GetObject();
                     
-                    // Check LocalizedProperties first
-                    if (productObject.TryGetValue("LocalizedProperties", out IJsonValue locVal) && locVal.ValueType == JsonValueType.Array)
-                    {
-                        var arr = locVal.GetArray();
-                        if (arr.Count > 0)
-                        {
-                            var prop = arr.GetObjectAt(0);
-                            if (prop.TryGetValue("PackageIdentityName", out IJsonValue pid) && pid.ValueType == JsonValueType.String)
-                                return pid.GetString();
-                        }
-                    }
+                    ProductIdentity identity = new ProductIdentity();
 
                     // Check Properties
                     if (productObject.TryGetValue("Properties", out IJsonValue propsVal) && propsVal.ValueType == JsonValueType.Object)
                     {
                         var props = propsVal.GetObject();
                         if (props.TryGetValue("PackageIdentityName", out IJsonValue pid) && pid.ValueType == JsonValueType.String)
-                            return pid.GetString();
+                            identity.Name = pid.GetString();
+                        if (props.TryGetValue("PublisherCertificateName", out IJsonValue publisher) && publisher.ValueType == JsonValueType.String)
+                            identity.Publisher = publisher.GetString();
                     }
+
+                    // Check LocalizedProperties as fallback for older catalog payloads
+                    if (productObject.TryGetValue("LocalizedProperties", out IJsonValue locVal) && locVal.ValueType == JsonValueType.Array)
+                    {
+                        var arr = locVal.GetArray();
+                        if (arr.Count > 0)
+                        {
+                            var prop = arr.GetObjectAt(0);
+                            if (string.IsNullOrEmpty(identity.Name)
+                                && prop.TryGetValue("PackageIdentityName", out IJsonValue pid)
+                                && pid.ValueType == JsonValueType.String)
+                                identity.Name = pid.GetString();
+                            if (string.IsNullOrEmpty(identity.Publisher)
+                                && prop.TryGetValue("PublisherCertificateName", out IJsonValue publisher)
+                                && publisher.ValueType == JsonValueType.String)
+                                identity.Publisher = publisher.GetString();
+                        }
+                    }
+
+                    return identity;
                 }
                 return null;
             }
         }
 
-        private async Task<bool> UpdateAppxManifestAsync(StorageFolder workingFolder, string identityName)
+        private async Task<bool> UpdateAppxManifestAsync(StorageFolder workingFolder, ProductIdentity identity)
         {
             try
             {
@@ -221,12 +240,12 @@ namespace Store_Acquisition_Assistant
                 XDocument doc = XDocument.Parse(content);
                 XNamespace ns = "http://schemas.microsoft.com/appx/manifest/foundation/windows10";
 
-                // Update Identity Name ONLY
+                // Update Identity values used to produce package family name
                 var identityElement = doc.Descendants(ns + "Identity").FirstOrDefault();
                 if (identityElement != null)
                 {
-                    identityElement.SetAttributeValue("Name", identityName);
-                    // We leave Publisher and other attributes exactly as they are in your template
+                    identityElement.SetAttributeValue("Name", identity.Name);
+                    identityElement.SetAttributeValue("Publisher", identity.Publisher);
                 }
 
                 // Save as AppxManifest.xml
