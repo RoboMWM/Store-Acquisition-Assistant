@@ -343,60 +343,127 @@ namespace Store_Acquisition_Assistant
 
         private async Task<ProductIdentity> FetchProductIdentityAsync(string productId, string market, string languages)
         {
-            string url = "https://displaycatalog.mp.microsoft.com/v7.0/products/"
-                + Uri.EscapeDataString(productId)
-                + "/0010?fieldsTemplate=InstallAgent&market="
-                + Uri.EscapeDataString(market)
-                + "&languages="
-                + Uri.EscapeDataString(languages);
+            string[] urls =
+            {
+                BuildDisplayCatalogUrl(productId, "0010", market, languages),
+                BuildDisplayCatalogUrl(productId, null, market, languages)
+            };
 
             using (HttpClient client = new HttpClient())
             {
-                var response = await client.GetAsync(url);
-                response.EnsureSuccessStatusCode();
-                string content = await response.Content.ReadAsStringAsync();
-                content = content.TrimStart('\uFEFF'); // Trim BOM
-
-                JsonObject jsonObject = JsonObject.Parse(content);
-                IJsonValue productValue;
-                if (jsonObject.TryGetValue("Product", out productValue) && productValue.ValueType == JsonValueType.Object)
+                for (int i = 0; i < urls.Length; i++)
                 {
-                    JsonObject productObject = productValue.GetObject();
-                    
-                    ProductIdentity identity = new ProductIdentity();
+                    string url = urls[i];
+                    OutputTextBlock.Text += $"[DEBUG] DisplayCatalog GET: {url}\n";
+                    HttpResponseMessage response = await client.GetAsync(url);
+                    string content = await response.Content.ReadAsStringAsync();
+                    OutputTextBlock.Text += $"[DEBUG] DisplayCatalog status: {(int)response.StatusCode} {response.ReasonPhrase}\n";
 
-                    // Check Properties
-                    if (productObject.TryGetValue("Properties", out IJsonValue propsVal) && propsVal.ValueType == JsonValueType.Object)
+                    if (!response.IsSuccessStatusCode)
                     {
-                        var props = propsVal.GetObject();
-                        if (props.TryGetValue("PackageIdentityName", out IJsonValue pid) && pid.ValueType == JsonValueType.String)
-                            identity.Name = pid.GetString();
-                        if (props.TryGetValue("PublisherCertificateName", out IJsonValue publisher) && publisher.ValueType == JsonValueType.String)
-                            identity.Publisher = publisher.GetString();
-                    }
-
-                    // Check LocalizedProperties as fallback for older catalog payloads
-                    if (productObject.TryGetValue("LocalizedProperties", out IJsonValue locVal) && locVal.ValueType == JsonValueType.Array)
-                    {
-                        var arr = locVal.GetArray();
-                        if (arr.Count > 0)
+                        OutputTextBlock.Text += FormatHttpFailure(response, content);
+                        if (i + 1 < urls.Length)
                         {
-                            var prop = arr.GetObjectAt(0);
-                            if (string.IsNullOrEmpty(identity.Name)
-                                && prop.TryGetValue("PackageIdentityName", out IJsonValue pid)
-                                && pid.ValueType == JsonValueType.String)
-                                identity.Name = pid.GetString();
-                            if (string.IsNullOrEmpty(identity.Publisher)
-                                && prop.TryGetValue("PublisherCertificateName", out IJsonValue publisher)
-                                && publisher.ValueType == JsonValueType.String)
-                                identity.Publisher = publisher.GetString();
+                            OutputTextBlock.Text += "[INFO] SKU 0010 unavailable; retrying product-level catalog.\n";
+                            continue;
                         }
+
+                        throw new HttpRequestException($"DisplayCatalog request failed: {(int)response.StatusCode} {response.ReasonPhrase}");
                     }
 
-                    return identity;
+                    content = content.TrimStart('\uFEFF'); // Trim BOM
+                    ProductIdentity identity = ParseProductIdentity(content);
+                    if (identity != null && !string.IsNullOrEmpty(identity.Name) && !string.IsNullOrEmpty(identity.Publisher))
+                        return identity;
+
+                    OutputTextBlock.Text += "[DEBUG] Catalog response did not contain PackageIdentityName and PublisherCertificateName.\n";
                 }
+
                 return null;
             }
+        }
+
+        private string BuildDisplayCatalogUrl(string productId, string skuId, string market, string languages)
+        {
+            string url = "https://displaycatalog.mp.microsoft.com/v7.0/products/"
+                + Uri.EscapeDataString(productId);
+
+            if (!string.IsNullOrEmpty(skuId))
+                url += "/" + Uri.EscapeDataString(skuId);
+
+            return url
+                + "?fieldsTemplate=InstallAgent&market="
+                + Uri.EscapeDataString(market)
+                + "&languages="
+                + Uri.EscapeDataString(languages);
+        }
+
+        private string FormatHttpFailure(HttpResponseMessage response, string content)
+        {
+            string body = (content ?? string.Empty).Trim();
+            if (body.Length > 2000)
+                body = body.Substring(0, 2000) + "...";
+
+            string result = $"[DEBUG] DisplayCatalog failure: HTTP {(int)response.StatusCode} {response.ReasonPhrase}\n";
+
+            if (response.Headers.Contains("ms-correlationid"))
+                result += $"[DEBUG] ms-correlationid: {string.Join(",", response.Headers.GetValues("ms-correlationid"))}\n";
+            if (response.Headers.Contains("ms-requestid"))
+                result += $"[DEBUG] ms-requestid: {string.Join(",", response.Headers.GetValues("ms-requestid"))}\n";
+            if (response.Headers.Contains("ms-cv"))
+                result += $"[DEBUG] ms-cv: {string.Join(",", response.Headers.GetValues("ms-cv"))}\n";
+
+            string contentType = response.Content.Headers.ContentType == null
+                ? "(none)"
+                : response.Content.Headers.ContentType.ToString();
+            result += $"[DEBUG] Content-Type: {contentType}\n";
+
+            if (!string.IsNullOrEmpty(body))
+                result += $"[DEBUG] Body: {body}\n";
+
+            return result;
+        }
+
+        private ProductIdentity ParseProductIdentity(string content)
+        {
+            JsonObject jsonObject = JsonObject.Parse(content);
+            IJsonValue productValue;
+            if (!jsonObject.TryGetValue("Product", out productValue) || productValue.ValueType != JsonValueType.Object)
+                return null;
+
+            JsonObject productObject = productValue.GetObject();
+
+            ProductIdentity identity = new ProductIdentity();
+
+            // Check Properties
+            if (productObject.TryGetValue("Properties", out IJsonValue propsVal) && propsVal.ValueType == JsonValueType.Object)
+            {
+                JsonObject props = propsVal.GetObject();
+                if (props.TryGetValue("PackageIdentityName", out IJsonValue pid) && pid.ValueType == JsonValueType.String)
+                    identity.Name = pid.GetString();
+                if (props.TryGetValue("PublisherCertificateName", out IJsonValue publisher) && publisher.ValueType == JsonValueType.String)
+                    identity.Publisher = publisher.GetString();
+            }
+
+            // Check LocalizedProperties as fallback for older catalog payloads
+            if (productObject.TryGetValue("LocalizedProperties", out IJsonValue locVal) && locVal.ValueType == JsonValueType.Array)
+            {
+                JsonArray arr = locVal.GetArray();
+                if (arr.Count > 0)
+                {
+                    JsonObject prop = arr.GetObjectAt(0);
+                    if (string.IsNullOrEmpty(identity.Name)
+                        && prop.TryGetValue("PackageIdentityName", out IJsonValue pid)
+                        && pid.ValueType == JsonValueType.String)
+                        identity.Name = pid.GetString();
+                    if (string.IsNullOrEmpty(identity.Publisher)
+                        && prop.TryGetValue("PublisherCertificateName", out IJsonValue publisher)
+                        && publisher.ValueType == JsonValueType.String)
+                        identity.Publisher = publisher.GetString();
+                }
+            }
+
+            return identity;
         }
 
         private async Task<bool> UpdateAppxManifestAsync(StorageFolder workingFolder, ProductIdentity identity)
