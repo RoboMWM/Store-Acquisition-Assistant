@@ -345,8 +345,8 @@ namespace Store_Acquisition_Assistant
         {
             string[] urls =
             {
-                BuildDisplayCatalogUrl(productId, "0010", market, languages),
-                BuildDisplayCatalogUrl(productId, null, market, languages)
+                BuildDisplayCatalogUrl(productId, null, market, languages),
+                BuildDisplayCatalogUrl(productId, "0010", market, languages)
             };
 
             using (HttpClient client = new HttpClient())
@@ -364,7 +364,7 @@ namespace Store_Acquisition_Assistant
                         OutputTextBlock.Text += FormatHttpFailure(response, content);
                         if (i + 1 < urls.Length)
                         {
-                            OutputTextBlock.Text += "[INFO] SKU 0010 unavailable; retrying product-level catalog.\n";
+                            OutputTextBlock.Text += "[INFO] Product-level catalog unavailable; retrying SKU 0010 catalog.\n";
                             continue;
                         }
 
