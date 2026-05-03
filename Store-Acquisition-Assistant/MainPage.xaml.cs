@@ -21,6 +21,10 @@ namespace Store_Acquisition_Assistant
     public sealed partial class MainPage : Page
     {
         private const string StagingFolderTokenSetting = "StagingFolderToken";
+        private const string CatalogMarketSetting = "CatalogMarket";
+        private const string CatalogLanguagesSetting = "CatalogLanguages";
+        private const string DefaultCatalogMarket = "US";
+        private const string DefaultCatalogLanguages = "en-US,en,impartial";
 
         private PackageManager packageManager = new PackageManager();
 
@@ -33,8 +37,18 @@ namespace Store_Acquisition_Assistant
         public MainPage()
         {
             this.InitializeComponent();
+            LoadCatalogSettings();
             this.GoButton.Click += GoButton_Click;
             this.ChangeFolderButton.Click += ChangeFolderButton_Click;
+            this.ResetCatalogDefaultsButton.Click += ResetCatalogDefaultsButton_Click;
+        }
+
+        private void ResetCatalogDefaultsButton_Click(object sender, RoutedEventArgs e)
+        {
+            CatalogMarketTextBox.Text = DefaultCatalogMarket;
+            CatalogLanguagesTextBox.Text = DefaultCatalogLanguages;
+            SaveCatalogSettings(DefaultCatalogMarket, DefaultCatalogLanguages);
+            UpdateStatus("DisplayCatalog defaults restored.");
         }
 
         private async void ChangeFolderButton_Click(object sender, RoutedEventArgs e)
@@ -54,6 +68,8 @@ namespace Store_Acquisition_Assistant
         private async void GoButton_Click(object sender, RoutedEventArgs e)
         {
             string productId = ProductIDTextBox.Text.Trim();
+            string market = CatalogMarketTextBox.Text.Trim();
+            string languages = CatalogLanguagesTextBox.Text.Trim();
 
             if (string.IsNullOrEmpty(productId))
             {
@@ -61,13 +77,28 @@ namespace Store_Acquisition_Assistant
                 return;
             }
 
+            if (string.IsNullOrEmpty(market))
+            {
+                UpdateStatus("Error: Please enter a catalog market");
+                return;
+            }
+
+            if (string.IsNullOrEmpty(languages))
+            {
+                UpdateStatus("Error: Please enter catalog languages");
+                return;
+            }
+
             try
             {
+                SaveCatalogSettings(market, languages);
                 UpdateStatus("Fetching product information from Microsoft Store...");
                 OutputTextBlock.Text = "";
+                OutputTextBlock.Text += $"[INFO] Catalog market: {market}\n";
+                OutputTextBlock.Text += $"[INFO] Catalog languages: {languages}\n";
 
                 // 1. Fetch Identity
-                ProductIdentity identity = await FetchProductIdentityAsync(productId);
+                ProductIdentity identity = await FetchProductIdentityAsync(productId, market, languages);
 
                 if (identity == null || string.IsNullOrEmpty(identity.Name) || string.IsNullOrEmpty(identity.Publisher))
                 {
@@ -242,6 +273,20 @@ namespace Store_Acquisition_Assistant
             ApplicationData.Current.LocalSettings.Values[StagingFolderTokenSetting] = token;
         }
 
+        private void LoadCatalogSettings()
+        {
+            CatalogMarketTextBox.Text = ApplicationData.Current.LocalSettings.Values[CatalogMarketSetting] as string
+                ?? DefaultCatalogMarket;
+            CatalogLanguagesTextBox.Text = ApplicationData.Current.LocalSettings.Values[CatalogLanguagesSetting] as string
+                ?? DefaultCatalogLanguages;
+        }
+
+        private void SaveCatalogSettings(string market, string languages)
+        {
+            ApplicationData.Current.LocalSettings.Values[CatalogMarketSetting] = market;
+            ApplicationData.Current.LocalSettings.Values[CatalogLanguagesSetting] = languages;
+        }
+
         private async Task UninstallExistingPackageAsync(string identityName)
         {
             Package existingPackage = packageManager.FindPackagesForUser(string.Empty)
@@ -296,9 +341,14 @@ namespace Store_Acquisition_Assistant
             }
         }
 
-        private async Task<ProductIdentity> FetchProductIdentityAsync(string productId)
+        private async Task<ProductIdentity> FetchProductIdentityAsync(string productId, string market, string languages)
         {
-            string url = $"https://displaycatalog.mp.microsoft.com/v7.0/products/{productId}/0010?fieldsTemplate=InstallAgent&market=US&languages=en-US,en,impartial";
+            string url = "https://displaycatalog.mp.microsoft.com/v7.0/products/"
+                + Uri.EscapeDataString(productId)
+                + "/0010?fieldsTemplate=InstallAgent&market="
+                + Uri.EscapeDataString(market)
+                + "&languages="
+                + Uri.EscapeDataString(languages);
 
             using (HttpClient client = new HttpClient())
             {
